@@ -1,0 +1,95 @@
+const express = require('express');
+const qrcode = require('qrcode-terminal');
+const wppconnect = require('@wppconnect-team/wppconnect');
+const path = require('path');
+const fetch = require('node-fetch');  // Para enviar dados ao webhook
+
+// Criação da aplicação Express
+const app = express();
+app.use(express.json());
+
+// Define o diretório de sessão como a pasta atual
+const sessionDir = path.resolve('./.wppconnect/bot-session');
+
+let client = null;  // Declara o cliente fora do endpoint, de modo que a instância seja compartilhada
+
+// Função que cria ou retorna a instância do cliente
+async function getClient() {
+    if (!client) {
+        try {
+            client = await wppconnect.create({
+                session: 'bot-session',
+                folderNameToken: 'tokens',
+                mkdirFolderToken: sessionDir,
+                catchQR: (base64Qr, asciiQR) => {
+                    console.log('Escaneie o QR Code abaixo para conectar:');
+                    qrcode.generate(asciiQR, { small: true });  // Exibe o QR Code no terminal
+                },
+                autoClose: false,  // Impede o fechamento automático da sessão
+                puppeteerOptions: {
+                    headless: true,
+                    args: ['--no-sandbox', '--disable-setuid-sandbox']  // Configuração do Puppeteer para não usar sandbox
+                }
+            });
+            console.log('✅ Bot conectado e pronto para uso!');
+
+            // Agora que o cliente está conectado, configura o listener de mensagens
+            client.onMessage(async (msg) => {
+                console.log(`Nova mensagem de ${msg.from}: ${msg.body}`);
+
+                // Enviar a mensagem para o webhook
+                await fetch('https://vps57267.publiccloud.com.br/webhook/wppconnect-server-lite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(msg)
+                });
+
+                await fetch('https://vps57267.publiccloud.com.br/webhook-test/wppconnect-server-lite', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(msg)
+                });
+            });
+
+        } catch (error) {
+            console.log('Erro ao iniciar o bot:', error);
+        }
+    }
+    return client;
+}
+
+// Endpoint para enviar mensagens via API
+app.post('/send-b4-4735-4d10-98e5-f2e7f4dfa0e4', async (req, res) => {
+    console.log("Processando requisição...");
+    const { number, message } = req.body;
+
+    // Verifica se o número e a mensagem foram passados corretamente
+    if (!number || !message) {
+        return res.status(400).json({ error: 'Número e mensagem são obrigatórios' });
+    }
+
+    try {
+        const client = await getClient();  // Usar a instância já existente ou criar uma nova se necessário
+        const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
+
+        // Envia a mensagem corretamente com o método sendText
+        await client.sendText(chatId, message);
+
+        // Exibe o log após o envio ser completado
+        console.log(`Mensagem enviada para ${number}: ${message}`);
+
+        // Responde após o envio bem-sucedido
+        res.json({ success: true, message: `Mensagem enviada para ${number}` });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem:', error);
+        res.status(500).json({ error: 'Erro ao enviar mensagem', details: error.message });
+    }
+});
+
+// Inicia o servidor Express após a conexão do cliente
+app.listen(3000, '0.0.0.0', () => {
+    console.log('Servidor Express rodando em http://0.0.0.0:3000');
+});
+
+// Inicia o bot
+getClient();

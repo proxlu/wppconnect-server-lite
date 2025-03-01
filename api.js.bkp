@@ -1,0 +1,84 @@
+const express = require('express');
+const qrcode = require('qrcode-terminal');
+const wppconnect = require('@wppconnect-team/wppconnect');
+const path = require('path');
+
+// Criação da aplicação Express
+const app = express();
+app.use(express.json());
+
+// Define o diretório de sessão como a pasta atual
+const sessionDir = path.resolve('./.wppconnect/bot-session');
+
+// Cria a sessão do wppconnect
+wppconnect.create({
+    session: 'bot-session',  // Nome da sessão
+    folderNameToken: 'tokens',  // Pasta onde os tokens de sessão são armazenados
+    mkdirFolderToken: sessionDir,  // Diretório de sessão dentro da pasta atual
+    catchQR: (base64Qr, asciiQR) => {
+        console.log('Escaneie o QR Code abaixo para conectar:');
+        qrcode.generate(asciiQR, { small: true });  // Exibe o QR Code no terminal
+    },
+    autoClose: false,  // Evita o fechamento automático
+    puppeteerOptions: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']  // Configuração do Puppeteer para não usar sandbox
+    }
+})
+.then(client => {
+    console.log('✅ Bot conectado e pronto para uso!');
+
+    // Endpoint para enviar mensagens via API
+    app.post('/send-b4-4735-4d10-98e5-f2e7f4dfa0e4', async (req, res) => {
+        console.log("Corpo da requisição:", req.body); // Adicione esse log para verificar o conteúdo
+        const { number, message } = req.body;
+
+        // Verifica se o número e a mensagem foram passados corretamente
+        if (!number || !message) {
+            return res.status(400).json({ error: 'Número e mensagem são obrigatórios' });
+        }
+
+        // Verifica se o cliente está pronto antes de tentar enviar a mensagem
+        if (!client.info || !client.info.wid) {
+ 	   console.log("Cliente não está pronto:", client.info); // Log para verificar o status
+	    return res.status(500).json({ error: "O cliente do WhatsApp ainda não está pronto." });
+	}
+
+        try {
+            // Formata o número para o formato correto
+            const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
+            await client.sendMessage(chatId, message);
+            res.json({ success: true, message: `Mensagem enviada para ${number}` });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ error: 'Erro ao enviar mensagem', details: error.message });
+        }
+    });
+
+    // Endpoint para receber mensagens
+    client.onAnyMessage(async (msg) => {
+        console.log(`Nova mensagem de ${msg.from}: ${msg.body}`);
+
+        await fetch('https://vps57267.publiccloud.com.br/webhook/wppconnect-server-lite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(msg)
+        });
+
+        await fetch('https://vps57267.publiccloud.com.br/webhook-test/wppconnect-server-lite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(msg)
+        });
+    });
+
+
+
+    // Inicia o servidor Express
+    app.listen(3000, '0.0.0.0', () => {
+        console.log(`Servidor rodando em http://vps57267.publiccloud.com.br:3000`);
+    });
+})
+.catch(error => {
+    console.log('Erro ao conectar com o WhatsApp:', error);
+});
