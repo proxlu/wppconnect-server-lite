@@ -8,21 +8,20 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const speech = require('@google-cloud/speech');
 const vision = require('@google-cloud/vision');
-process.env.GOOGLE_APPLICATION_CREDENTIALS = "./google.json";
 const ffmpeg = require('fluent-ffmpeg');
+process.env.GOOGLE_APPLICATION_CREDENTIALS = "./google.json";
 
 const clientSpeech = new speech.SpeechClient();
 const clientVision = new vision.ImageAnnotatorClient();
 
 const app = express();
 app.use(express.json());
-const sessionDir = path.resolve('./.wppconnect/bot-session');
+const sessionDir = path.resolve('./tokens/bot-session');
 let client = null;
 
-// Verifica se o ffmpeg está instalado
-function checkFFmpeg() {
+async function checkFFmpeg() {
   return new Promise((resolve, reject) => {
-    ffmpeg.getAvailableFormats((err, formats) => {
+    ffmpeg.getAvailableFormats((err) => {
       if (err) {
         reject(new Error('ffmpeg não está instalado ou não está no PATH.'));
       } else {
@@ -59,9 +58,14 @@ async function getClient() {
 }
 
 async function processMessage(msg) {
-  console.log(`Nova mensagem de ${msg.from}: ${msg.body}`);
-  let messageContent = msg.body;
+  console.log(`📩 Nova mensagem de ${msg.from}: ${msg.body}`);
 
+  if (msg.from.includes('@g.us')) {
+    console.log('🚫 Mensagem de grupo detectada. Ignorando...');
+    return;
+  }
+
+  let messageContent = msg.body;
   if (msg.type === 'ptt' || msg.type === 'image') {
     try {
       console.log(`Baixando mídia (${msg.type})...`);
@@ -69,7 +73,7 @@ async function processMessage(msg) {
       console.log(`Arquivo salvo: ${filePath}`);
       
       if (msg.type === 'ptt') {
-        await checkFFmpeg(); // Verifica se o ffmpeg está instalado
+        await checkFFmpeg();
         messageContent = await transcribeAudio(filePath);
       } else if (msg.type === 'image') {
         messageContent = await detectTextInImage(filePath);
@@ -84,33 +88,7 @@ async function processMessage(msg) {
     messageContent = 'Nenhum conteúdo transcrito ou erro na conversão';
   }
 
-  const payload = {
-    body: messageContent,
-    number: msg.from,
-    timestamp: new Date().toISOString()
-  };
-
-  await sendToWebhooks(payload);
-}
-
-async function sendToWebhooks(payload) {
-  const webhooks = [
-    'https://vps57267.publiccloud.com.br/webhook/wppconnect-server-lite',
-    'https://vps57267.publiccloud.com.br/webhook-test/wppconnect-server-lite'
-  ];
-
-  for (const webhook of webhooks) {
-    try {
-      const res = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      console.log(`Resposta do webhook ${webhook}:`, await res.text());
-    } catch (err) {
-      console.error(`Erro ao enviar para o webhook ${webhook}:`, err);
-    }
-  }
+  await sendToWebhooks({ body: messageContent, number: msg.from, timestamp: new Date().toISOString() });
 }
 
 async function downloadMedia(msg) {
@@ -144,74 +122,49 @@ async function convertAudioToWav(inputPath) {
 }
 
 async function transcribeAudio(filePath) {
-  try {
-    console.log(`Convertendo áudio para WAV: ${filePath}`);
-    const wavPath = await convertAudioToWav(filePath);
-    console.log(`Áudio convertido para WAV: ${wavPath}`);
-    
-    const audio = { content: fs.readFileSync(wavPath).toString('base64') };
-    const config = {
-      encoding: 'LINEAR16',
-      sampleRateHertz: 16000,
-      languageCode: 'pt-BR'
-    };
-    const request = { audio, config };
-    const [response] = await clientSpeech.recognize(request);
-    
-    console.log('Resposta da API Google Speech:', JSON.stringify(response, null, 2));
-    
-    if (!response.results || response.results.length === 0) {
-      console.log('Nenhuma transcrição detectada');
-      return 'Nenhuma transcrição detectada';
-    }
-    
-    const transcription = response.results.map(result => result.alternatives[0].transcript).join('\n');
-    console.log(`Transcrição gerada: ${transcription}`);
-    return transcription.trim() !== '' ? transcription : 'Nenhuma transcrição encontrada';
-  } catch (error) {
-    console.error('Erro na transcrição de áudio:', error);
-    return 'Erro ao transcrever áudio';
-  }
+  const wavPath = await convertAudioToWav(filePath);
+  const audio = { content: fs.readFileSync(wavPath).toString('base64') };
+  const config = { encoding: 'LINEAR16', sampleRateHertz: 16000, languageCode: 'pt-BR' };
+  const request = { audio, config };
+  const [response] = await clientSpeech.recognize(request);
+  return response.results?.map(r => r.alternatives[0].transcript).join('\n') || 'Nenhuma transcrição encontrada';
 }
 
 async function detectTextInImage(imagePath) {
-  try {
-    const [result] = await clientVision.textDetection(imagePath);
-    const detections = result.textAnnotations;
-    return detections.length > 0 ? detections[0].description.trim() : 'Nenhum texto encontrado';
-  } catch (error) {
-    console.error('Erro na extração de texto da imagem:', error);
-    return 'Erro ao extrair texto da imagem';
+  const [result] = await clientVision.textDetection(imagePath);
+  return result.textAnnotations.length > 0 ? result.textAnnotations[0].description.trim() : 'Nenhum texto encontrado';
+}
+
+async function sendToWebhooks(payload) {
+  const webhooks = [
+    'http://0.0.0.0/webhook/,
+    'http://0.0.0.0/webhook-test/
+  ];
+  for (const webhook of webhooks) {
+    try {
+      const res = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      console.log(`Resposta do webhook ${webhook}:`, await res.text());
+    } catch (err) {
+      console.error(`Erro ao enviar para o webhook ${webhook}:`, err);
+    }
   }
 }
 
-// Endpoint para enviar mensagens via API para o WhatsApp
 app.post('/send', async (req, res) => {
-  console.log("Processando requisição de envio...");
   const { number, message } = req.body;
-
-  if (!number || !message) {
-    return res.status(400).json({ error: 'Número e mensagem são obrigatórios' });
-  }
-
+  if (!number || !message) return res.status(400).json({ error: 'Número e mensagem são obrigatórios' });
   try {
     const client = await getClient();
-    const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
-
-    // Envia a mensagem de texto via WhatsApp
+    const chatId = number.includes('@c.us') || number.includes('@g.us') ? number : `${number}@c.us`;
     await client.sendText(chatId, message);
-    console.log(`Mensagem enviada para ${number}: ${message}`);
     res.json({ success: true, message: `Mensagem enviada para ${number}` });
   } catch (error) {
-    console.error('Erro ao enviar mensagem:', error);
     res.status(500).json({ error: 'Erro ao enviar mensagem', details: error.message });
   }
 });
 
-// Inicia o servidor Express
 app.listen(3000, '0.0.0.0', () => {
   console.log('Servidor Express rodando em http://0.0.0.0:3000');
 });
 
-// Inicia o bot
 getClient();
