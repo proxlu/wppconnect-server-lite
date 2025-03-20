@@ -137,8 +137,8 @@ async function detectTextInImage(imagePath) {
 
 async function sendToWebhooks(payload) {
   const webhooks = [
-    'http://0.0.0.0/webhook/,
-    'http://0.0.0.0/webhook-test/
+    'http://0.0.0.0/webhook/',
+    'http://0.0.0.0/webhook-test/'
   ];
   for (const webhook of webhooks) {
     try {
